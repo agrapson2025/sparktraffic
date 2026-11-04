@@ -3,18 +3,16 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>SparkTraffic Studio & Campaign Engine</title>
-  <!-- Tailwind CSS -->
+  <title>SparkTraffic GA4+ | Control Center</title>
   <script src="https://cdn.tailwindcss.com"></script>
-  <!-- React & ReactDOM -->
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-  <!-- Babel to interpret JSX in the browser -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-  <!-- Lucide Icons -->
-  <script src="https://unpkg.com/lucide@latest"></script>
   <style>
-    body { background-color: #020617; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: #060b18; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: #060b18; }
+    ::-webkit-scrollbar-thumb { background: #1e293b; border-radius: 4px; }
   </style>
 </head>
 <body class="min-h-screen">
@@ -24,456 +22,412 @@
     const { useState, useEffect } = React;
 
     function App() {
-      const [activeTab, setActiveTab] = useState('campaigns');
-      const [targetDomain, setTargetDomain] = useState('https://mywebsite.com');
-      const [measurementId, setMeasurementId] = useState('G-DEMO123456');
+      const [activeTab, setActiveTab] = useState('crawl_launch');
+      const [targetDomain, setTargetDomain] = useState('https://example.com');
+      const [measurementId, setMeasurementId] = useState('');
+      const [apiSecret, setApiSecret] = useState('');
+      const [trafficSource, setTrafficSource] = useState('google');
+      const [trafficMedium, setTrafficMedium] = useState('organic');
+      const [campaignName, setCampaignName] = useState('sparktraffic_boost');
       const [isCrawling, setIsCrawling] = useState(false);
-      const [dailyVisits, setDailyVisits] = useState(2500);
-      const [bounceRate, setBounceRate] = useState(35);
-      const [trafficSource, setTrafficSource] = useState('organic');
-      const [clickThroughRate, setClickThroughRate] = useState(15);
+      const [crawlStatus, setCrawlStatus] = useState('');
+      const [fireClick, setFireClick] = useState(true);
 
       const [discoveredUrls, setDiscoveredUrls] = useState([
-        { id: 1, path: '/', enabled: true, weight: 40 },
-        { id: 2, path: '/pricing', enabled: true, weight: 25 },
-        { id: 3, path: '/features', enabled: true, weight: 20 },
-        { id: 4, path: '/blog/how-it-works', enabled: true, weight: 15 }
+        { id: 1, path: '/', weight: 50, enabled: true },
+        { id: 2, path: '/pricing', weight: 30, enabled: true },
+        { id: 3, path: '/features', weight: 20, enabled: true }
       ]);
+      const [newPathInput, setNewPathInput] = useState('');
 
-      const [newPath, setNewPath] = useState('');
+      const [isSending, setIsSending] = useState(false);
+      const [sendResult, setSendResult] = useState(null);
+      const [liveLogs, setLiveLogs] = useState([]);
 
-      const [campaigns, setCampaigns] = useState([
-        {
-          id: 'CMP-9041',
-          domain: 'https://mywebsite.com',
-          dailyVisits: 2500,
-          deliveredToday: 1842,
-          activeUrls: 4,
-          status: 'active',
-          source: 'organic',
-          bounceRate: 35
+      // 1. Real Crawler action (No 400 errors)
+      const crawlRealDomain = async () => {
+        if (!targetDomain || !targetDomain.trim()) {
+          setCrawlStatus('Please enter a valid domain first.');
+          return;
         }
-      ]);
-
-      const [hitLogs, setHitLogs] = useState([]);
-
-      const crawlDomain = () => {
         setIsCrawling(true);
-        setTimeout(() => {
-          setDiscoveredUrls([
-            { id: 1, path: '/', enabled: true, weight: 35 },
-            { id: 2, path: '/about', enabled: true, weight: 15 },
-            { id: 3, path: '/pricing', enabled: true, weight: 25 },
-            { id: 4, path: '/blog/post-1', enabled: true, weight: 15 },
-            { id: 5, path: '/contact', enabled: true, weight: 10 }
-          ]);
+        setCrawlStatus('Crawling website pages and extracting internal URLs...');
+        setSendResult(null);
+
+        try {
+          const res = await fetch(`/api/crawl?domain=${encodeURIComponent(targetDomain.trim())}`);
+          const data = await res.json();
+          if (data && data.urls && data.urls.length > 0) {
+            setDiscoveredUrls(data.urls);
+            setCrawlStatus(`Discovered & balanced ${data.urls.length} URLs from ${data.domain}`);
+          } else {
+            setCrawlStatus('Could not extract sub-paths. Fallback root URL loaded.');
+          }
+        } catch (err) {
+          setCrawlStatus(`Crawler error: ${err.message}`);
+        } finally {
           setIsCrawling(false);
-        }, 1200);
+        }
       };
 
-      const equalizeWeights = () => {
+      const equalizeSpread = () => {
         const active = discoveredUrls.filter(u => u.enabled);
         if (active.length === 0) return;
         const split = Math.floor(100 / active.length);
         const remainder = 100 - (split * active.length);
-        let assigned = 0;
-        setDiscoveredUrls(discoveredUrls.map((u) => {
+        let count = 0;
+        setDiscoveredUrls(discoveredUrls.map(u => {
           if (!u.enabled) return { ...u, weight: 0 };
-          assigned++;
-          return { ...u, weight: split + (assigned === 1 ? remainder : 0) };
+          count++;
+          return { ...u, weight: split + (count === 1 ? remainder : 0) };
         }));
       };
 
-      const addPath = () => {
-        if (!newPath) return;
-        const cleanPath = newPath.startsWith('/') ? newPath : '/' + newPath;
-        setDiscoveredUrls([...discoveredUrls, { id: Date.now(), path: cleanPath, enabled: true, weight: 10 }]);
-        setNewPath('');
-      };
-
-      const removePath = (id) => {
-        setDiscoveredUrls(discoveredUrls.filter(u => u.id !== id));
-      };
-
-      const toggleUrl = (id) => {
+      const toggleUrlCheck = (id) => {
         setDiscoveredUrls(discoveredUrls.map(u => u.id === id ? { ...u, enabled: !u.enabled } : u));
       };
 
-      const createCampaign = () => {
-        const activeCount = discoveredUrls.filter(u => u.enabled).length;
-        const newCamp = {
-          id: `CMP-${Math.floor(1000 + Math.random() * 9000)}`,
-          domain: targetDomain,
-          dailyVisits: dailyVisits,
-          deliveredToday: 0,
-          activeUrls: activeCount,
-          status: 'active',
-          source: trafficSource,
-          bounceRate: bounceRate
-        };
-        setCampaigns([newCamp, ...campaigns]);
-        setActiveTab('campaigns');
+      const updateWeight = (id, val) => {
+        setDiscoveredUrls(discoveredUrls.map(u => u.id === id ? { ...u, weight: Number(val) || 0 } : u));
       };
 
-      const toggleCampaignStatus = (id) => {
-        setCampaigns(campaigns.map(c => {
-          if (c.id === id) {
-            return { ...c, status: c.status === 'active' ? 'paused' : 'active' };
+      const deleteUrl = (id) => {
+        setDiscoveredUrls(discoveredUrls.filter(u => u.id !== id));
+      };
+
+      const addCustomUrl = () => {
+        if (!newPathInput.trim()) return;
+        const formatted = newPathInput.trim().startsWith('/') ? newPathInput.trim() : '/' + newPathInput.trim();
+        setDiscoveredUrls([...discoveredUrls, { id: Date.now(), path: formatted, weight: 10, enabled: true }]);
+        setNewPathInput('');
+      };
+
+      // 2. Explicit GA4 Dispatch Action (No unauthenticated background loops)
+      const dispatchGa4Hit = async () => {
+        if (!measurementId.trim().startsWith('G-')) {
+          setSendResult({ error: 'Please enter a valid GA4 Measurement ID (starting with G-).' });
+          return;
+        }
+        if (!apiSecret.trim()) {
+          setSendResult({ error: 'Please enter your GA4 API Secret generated in GA4 Admin.' });
+          return;
+        }
+
+        const activeUrls = discoveredUrls.filter(u => u.enabled);
+        const selectedUrl = activeUrls.length > 0
+          ? activeUrls[Math.floor(Math.random() * activeUrls.length)].path
+          : '/';
+
+        setIsSending(true);
+        setSendResult(null);
+
+        try {
+          const res = await fetch('/api/dispatch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              measurement_id: measurementId.trim(),
+              api_secret: apiSecret.trim(),
+              domain: targetDomain,
+              path: selectedUrl,
+              utm_source: trafficSource,
+              utm_medium: trafficMedium,
+              utm_campaign: campaignName,
+              fire_click: fireClick
+            })
+          });
+
+          const data = await res.json();
+          if (res.ok && data.success) {
+            setSendResult({ success: true, message: data.ga_status });
+            setLiveLogs(prev => [data, ...prev.slice(0, 30)]);
+          } else {
+            setSendResult({ error: data.error || 'Google Analytics rejected the transmission.' });
           }
-          return c;
-        }));
+        } catch (err) {
+          setSendResult({ error: `Network error: ${err.message}` });
+        } finally {
+          setIsSending(false);
+        }
       };
 
-      useEffect(() => {
-        const interval = setInterval(() => {
-          const activeCamps = campaigns.filter(c => c.status === 'active');
-          if (activeCamps.length === 0) return;
-
-          const camp = activeCamps[Math.floor(Math.random() * activeCamps.length)];
-          const enabledUrls = discoveredUrls.filter(u => u.enabled);
-          const chosenUrl = enabledUrls.length > 0 ? enabledUrls[Math.floor(Math.random() * enabledUrls.length)].path : '/';
-
-          const countries = ['United States', 'United Kingdom', 'Germany', 'Canada', 'France', 'Japan'];
-          const isClicked = Math.random() * 100 < clickThroughRate;
-
-          const newLog = {
-            id: Math.random().toString(36).substring(7),
-            time: new Date().toLocaleTimeString(),
-            domain: camp.domain,
-            url: chosenUrl,
-            country: countries[Math.floor(Math.random() * countries.length)],
-            source: camp.source,
-            clicked: isClicked,
-            status: '200 OK - Dispatched to GA4'
-          };
-
-          setHitLogs(prev => [newLog, ...prev.slice(0, 49)]);
-
-          setCampaigns(prev => prev.map(c => {
-            if (c.id === camp.id) {
-              return { ...c, deliveredToday: c.deliveredToday + 1 };
-            }
-            return c;
-          }));
-        }, 2800);
-
-        return () => clearInterval(interval);
-      }, [campaigns, discoveredUrls, clickThroughRate]);
+      const totalWeight = discoveredUrls.reduce((sum, u) => u.enabled ? sum + (Number(u.weight) || 0) : sum, 0);
 
       return (
-        <div className="flex h-screen bg-slate-950 text-slate-100 overflow-hidden">
-          {/* Sidebar */}
-          <aside className="w-64 bg-slate-900 border-r border-slate-800 flex flex-col justify-between p-4">
+        <div className="flex h-screen bg-[#060b18] text-slate-100 overflow-hidden font-sans">
+          
+          {/* SIDEBAR */}
+          <aside className="w-64 bg-[#0a1124] border-r border-slate-800/80 flex flex-col justify-between p-4 flex-shrink-0">
             <div>
-              <div className="flex items-center gap-3 px-2 py-4 border-b border-slate-800 mb-6">
-                <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
-                  ST
+              <div className="flex items-center gap-3 px-2 py-3 mb-5 border-b border-slate-800">
+                <div className="w-9 h-9 rounded-xl bg-gradient-to-tr from-cyan-500 to-indigo-600 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20">
+                  ⚡
                 </div>
                 <div>
-                  <h1 className="font-bold text-base leading-tight tracking-wide">SparkTraffic</h1>
-                  <p className="text-xs text-indigo-400">Automated Delivery Engine</p>
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-extrabold text-base tracking-tight text-white">SparkTraffic</span>
+                    <span className="text-[10px] bg-indigo-500/30 text-indigo-300 font-semibold px-1.5 py-0.5 rounded border border-indigo-500/30">GA4+</span>
+                  </div>
                 </div>
               </div>
 
-              <nav className="space-y-1">
+              <div className="bg-[#0f1935] border border-slate-800/80 rounded-xl p-3.5 mb-6">
+                <div className="flex justify-between items-center text-xs text-amber-400 font-semibold mb-1">
+                  <span>⚡ Account Credits</span>
+                  <span className="text-slate-400">Unlimited</span>
+                </div>
+                <div className="text-2xl font-black text-white tracking-tight">
+                  100,000 <span className="text-xs text-slate-400 font-normal">pts</span>
+                </div>
+              </div>
+
+              <nav className="space-y-1 text-sm font-medium">
                 <button 
-                  onClick={() => setActiveTab('campaigns')}
-                  className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === 'campaigns' ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                  onClick={() => setActiveTab('crawl_launch')}
+                  className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition ${activeTab === 'crawl_launch' ? 'bg-indigo-600/20 text-indigo-400 font-semibold border border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}
                 >
-                  ⚡ Active Campaigns
+                  <span className="text-base">⊕</span> Crawl & Dispatcher
                 </button>
                 <button 
-                  onClick={() => setActiveTab('new')}
-                  className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === 'new' ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
+                  onClick={() => setActiveTab('logs')}
+                  className={`w-full flex justify-between items-center px-3 py-2.5 rounded-lg transition ${activeTab === 'logs' ? 'bg-indigo-600/20 text-indigo-400 font-semibold border border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800/50 hover:text-slate-200'}`}
                 >
-                  + Launch Campaign & Crawler
-                </button>
-                <button 
-                  onClick={() => setActiveTab('live')}
-                  className={`w-full text-left px-3 py-2.5 rounded-lg text-sm font-medium transition ${activeTab === 'live' ? 'bg-indigo-600/20 text-indigo-400 border border-indigo-500/30' : 'text-slate-400 hover:bg-slate-800 hover:text-slate-200'}`}
-                >
-                  📡 Real-time GA4 Stream
+                  <div className="flex items-center gap-3">
+                    <span className="text-base">∿</span> Event Logs
+                  </div>
+                  <span className="text-xs bg-slate-800 text-slate-300 px-2 py-0.5 rounded-full">{liveLogs.length}</span>
                 </button>
               </nav>
             </div>
 
-            <div className="p-3 bg-slate-950/60 rounded-xl border border-slate-800 text-xs text-slate-400">
-              <div className="flex items-center gap-2 mb-1 text-slate-200 font-semibold">
-                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                Proxy Cluster Active
-              </div>
-              <p>Global Residential Proxies: 12,480 Online</p>
+            <div className="p-3 bg-[#0a1124] rounded-xl border border-slate-800 text-xs text-slate-400">
+              <span className="text-emerald-400 font-semibold block mb-0.5">● Ready for Dispatch</span>
+              Google Measurement Protocol V4
             </div>
           </aside>
 
-          {/* Main Content */}
-          <main className="flex-1 overflow-y-auto p-8 bg-slate-950">
-            {activeTab === 'campaigns' && (
-              <div className="max-w-6xl mx-auto space-y-6">
-                <div className="flex justify-between items-center">
-                  <div>
-                    <h2 className="text-2xl font-bold">Campaign Dashboard</h2>
-                    <p className="text-slate-400 text-sm">Monitor simulated visitor distributions and active GA4 runs.</p>
-                  </div>
-                  <button 
-                    onClick={() => setActiveTab('new')}
-                    className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium shadow-lg shadow-indigo-600/20 transition"
-                  >
-                    + New Multi-URL Campaign
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                  <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-                    <p className="text-slate-400 text-xs font-semibold uppercase">Total Visits Today</p>
-                    <h3 className="text-3xl font-extrabold mt-1 text-indigo-400">
-                      {campaigns.reduce((acc, c) => acc + c.deliveredToday, 0).toLocaleString()}
-                    </h3>
-                  </div>
-                  <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-                    <p className="text-slate-400 text-xs font-semibold uppercase">Active Campaigns</p>
-                    <h3 className="text-3xl font-extrabold mt-1 text-white">
-                      {campaigns.filter(c => c.status === 'active').length}
-                    </h3>
-                  </div>
-                  <div className="bg-slate-900 border border-slate-800 p-5 rounded-xl">
-                    <p className="text-slate-400 text-xs font-semibold uppercase">Simulated GA4 Status</p>
-                    <h3 className="text-3xl font-extrabold mt-1 text-emerald-400">Connected</h3>
-                  </div>
-                </div>
-
-                <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-                  <div className="px-6 py-4 border-b border-slate-800 font-semibold text-sm">
-                    Managed Target Domains
-                  </div>
-                  <table className="w-full text-left text-sm text-slate-300">
-                    <thead className="bg-slate-950/60 text-xs uppercase text-slate-400">
-                      <tr>
-                        <th className="px-6 py-3">Domain</th>
-                        <th className="px-6 py-3">Source</th>
-                        <th className="px-6 py-3">Pages Spread</th>
-                        <th className="px-6 py-3">Delivered / Goal</th>
-                        <th className="px-6 py-3">Status</th>
-                        <th className="px-6 py-3">Actions</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-800">
-                      {campaigns.map(camp => (
-                        <tr key={camp.id} className="hover:bg-slate-800/40">
-                          <td className="px-6 py-4 font-medium text-white">{camp.domain}</td>
-                          <td className="px-6 py-4 capitalize">{camp.source}</td>
-                          <td className="px-6 py-4">{camp.activeUrls} active pages</td>
-                          <td className="px-6 py-4">{camp.deliveredToday} / {camp.dailyVisits}</td>
-                          <td className="px-6 py-4">
-                            <span className={`px-2 py-1 rounded text-xs font-medium ${camp.status === 'active' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30'}`}>
-                              {camp.status}
-                            </span>
-                          </td>
-                          <td className="px-6 py-4">
-                            <button 
-                              onClick={() => toggleCampaignStatus(camp.id)}
-                              className="px-3 py-1 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700 transition"
-                            >
-                              {camp.status === 'active' ? 'Pause' : 'Resume'}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            )}
-
-            {activeTab === 'new' && (
+          {/* MAIN WORKSPACE */}
+          <main className="flex-1 overflow-y-auto p-8 bg-[#060b18]">
+            
+            {activeTab === 'crawl_launch' && (
               <div className="max-w-4xl mx-auto space-y-6">
-                <div>
-                  <h2 className="text-2xl font-bold">New Campaign & Link Crawler</h2>
-                  <p className="text-slate-400 text-sm">Fetch all URLs from any domain and distribute visitors uniformly into Google Analytics.</p>
+                
+                <div className="border-b border-slate-800/80 pb-4">
+                  <h1 className="text-2xl font-black text-white">Domain Crawler & GA4 Measurement Dispatcher</h1>
+                  <p className="text-xs text-slate-400 mt-1">Crawl domain links and dispatch verified server-side hits straight into GA4 Realtime reports.</p>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 p-6 rounded-xl space-y-5">
-                  <label className="block text-sm font-semibold text-slate-300">Target Website Domain</label>
-                  <div className="flex gap-2">
-                    <input 
-                      type="text" 
-                      value={targetDomain}
-                      onChange={(e) => setTargetDomain(e.target.value)}
-                      placeholder="https://example.com"
-                      className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-4 py-2.5 text-sm text-white"
-                    />
+                {/* 1. DOMAIN SCRAPER */}
+                <div className="bg-[#0b1329] border border-slate-800 rounded-2xl p-6 space-y-5 shadow-xl">
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 uppercase tracking-wider mb-2 block">
+                      Target Domain to Crawl
+                    </label>
+                    <div className="flex gap-2">
+                      <input 
+                        type="text" 
+                        value={targetDomain}
+                        onChange={(e) => setTargetDomain(e.target.value)}
+                        placeholder="https://example.com"
+                        className="flex-1 bg-[#060b18] border border-slate-700 rounded-xl px-4 py-3 text-sm text-white font-mono focus:outline-none focus:border-indigo-500"
+                      />
+                      <button 
+                        onClick={crawlRealDomain}
+                        disabled={isCrawling}
+                        className="px-6 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-sm font-bold shadow-lg shadow-indigo-600/20 transition disabled:opacity-50"
+                      >
+                        {isCrawling ? 'Crawling...' : 'Auto-Crawl / Fetch Links'}
+                      </button>
+                    </div>
+                    {crawlStatus && (
+                      <p className="text-xs text-indigo-400 mt-2 font-mono">{crawlStatus}</p>
+                    )}
+                  </div>
+
+                  {/* Discovered URLs Box */}
+                  <div className="border border-slate-800/80 rounded-xl p-4 bg-[#070d1e]">
+                    <div className="flex justify-between items-center mb-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-white uppercase">
+                          Discovered URLs ({discoveredUrls.filter(u => u.enabled).length} active)
+                        </span>
+                        <span className="text-xs px-2 py-0.5 rounded font-mono font-bold bg-slate-800 text-indigo-300">
+                          Weight: {totalWeight}%
+                        </span>
+                      </div>
+                      <button 
+                        onClick={equalizeSpread}
+                        className="text-xs text-indigo-400 bg-indigo-950/60 px-3 py-1 rounded-lg border border-indigo-800/50"
+                      >
+                        Equalize Weights
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
+                      {discoveredUrls.map((item) => (
+                        <div key={item.id} className="flex items-center gap-3 bg-[#0a1124] p-2.5 rounded-xl border border-slate-800 text-xs font-mono">
+                          <input 
+                            type="checkbox" 
+                            checked={item.enabled}
+                            onChange={() => toggleUrlCheck(item.id)}
+                            className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-indigo-600"
+                          />
+                          <span className="flex-1 text-slate-300 truncate">{targetDomain}{item.path}</span>
+                          <input 
+                            type="range"
+                            min="0"
+                            max="100"
+                            value={item.weight}
+                            onChange={(e) => updateWeight(item.id, e.target.value)}
+                            className="w-24 accent-indigo-500 cursor-pointer"
+                          />
+                          <span className="w-10 text-right text-indigo-400 font-bold">{item.weight}%</span>
+                          <button onClick={() => deleteUrl(item.id)} className="text-slate-500 hover:text-red-400 px-1">✕</button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div className="flex gap-2 mt-3 pt-3 border-t border-slate-800">
+                      <input 
+                        type="text" 
+                        value={newPathInput}
+                        onChange={(e) => setNewPathInput(e.target.value)}
+                        placeholder="Add manual path (e.g. /blog/post-1)"
+                        className="flex-1 bg-[#060b18] border border-slate-700 rounded-lg px-3 py-2 text-xs text-slate-300 font-mono"
+                      />
+                      <button onClick={addCustomUrl} className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs">
+                        + Add Route
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 2. GA4 DISPATCHER CREDENTIALS & SENDER */}
+                  <div className="border border-slate-800/80 rounded-xl p-5 bg-[#070d1e] space-y-4">
+                    <h3 className="text-sm font-bold text-white uppercase tracking-wider flex items-center gap-2">
+                      <span>📊</span> Google Analytics 4 Transmission Settings
+                    </h3>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400 mb-1 block">
+                          GA4 Measurement ID <span className="text-rose-400">*</span>
+                        </label>
+                        <input 
+                          type="text" 
+                          placeholder="G-XXXXXXXXXX"
+                          value={measurementId}
+                          onChange={(e) => setMeasurementId(e.target.value)}
+                          className="w-full bg-[#060b18] border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400 mb-1 block">
+                          Measurement Protocol API Secret <span className="text-rose-400">*</span>
+                        </label>
+                        <input 
+                          type="password" 
+                          placeholder="Created in GA4 Admin"
+                          value={apiSecret}
+                          onChange={(e) => setApiSecret(e.target.value)}
+                          className="w-full bg-[#060b18] border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400 mb-1 block">Source / Channel Preset</label>
+                        <select 
+                          value={`${trafficSource}:${trafficMedium}`}
+                          onChange={(e) => {
+                            const [src, med] = e.target.value.split(':');
+                            setTrafficSource(src);
+                            setTrafficMedium(med);
+                          }}
+                          className="w-full bg-[#060b18] border border-slate-700 rounded-lg px-3 py-2 text-xs text-white"
+                        >
+                          <option value="google:organic">Google / Organic</option>
+                          <option value="bing:organic">Bing / Organic</option>
+                          <option value="reddit:social">Reddit / Social</option>
+                          <option value="direct:(none)">Direct / None</option>
+                        </select>
+                      </div>
+                      <div>
+                        <label className="text-xs font-semibold text-slate-400 mb-1 block">Campaign Name (utm_campaign)</label>
+                        <input 
+                          type="text" 
+                          value={campaignName}
+                          onChange={(e) => setCampaignName(e.target.value)}
+                          className="w-full bg-[#060b18] border border-slate-700 rounded-lg px-3 py-2 text-xs text-white font-mono"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 pt-1">
+                      <input 
+                        type="checkbox"
+                        id="fireClick"
+                        checked={fireClick}
+                        onChange={(e) => setFireClick(e.target.checked)}
+                        className="rounded bg-slate-900 border-slate-700 text-indigo-600"
+                      />
+                      <label htmlFor="fireClick" className="text-xs text-slate-300">
+                        Include In-Page Interaction / Click Event with Hit
+                      </label>
+                    </div>
+
+                    {sendResult && (
+                      <div className={`p-3 rounded-lg text-xs font-mono ${sendResult.success ? 'bg-emerald-950/60 text-emerald-300 border border-emerald-800' : 'bg-rose-950/60 text-rose-300 border border-rose-800'}`}>
+                        {sendResult.success ? `✓ ${sendResult.message}` : `⚠ ${sendResult.error}`}
+                      </div>
+                    )}
+
                     <button 
-                      onClick={crawlDomain}
-                      disabled={isCrawling}
-                      className="px-5 py-2.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition"
+                      onClick={dispatchGa4Hit}
+                      disabled={isSending}
+                      className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 font-bold text-white rounded-xl shadow-lg shadow-indigo-600/30 transition text-sm disabled:opacity-50"
                     >
-                      {isCrawling ? 'Crawling...' : 'Fetch Links'}
+                      {isSending ? 'Sending to Google Analytics...' : '🚀 Dispatch Test Hit to Google Analytics'}
                     </button>
                   </div>
-
-                  <div className="border border-slate-800 rounded-lg p-4 bg-slate-950/50 space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-xs font-semibold text-slate-300">Target URL Distribution & Weight (%)</span>
-                      <button 
-                        onClick={equalizeWeights} 
-                        className="text-xs text-indigo-400 bg-indigo-950/40 px-2.5 py-1 rounded border border-indigo-800/40"
-                      >
-                        ⚖️ Equalize Spread
-                      </button>
-                    </div>
-
-                    {discoveredUrls.map(item => (
-                      <div key={item.id} className="flex items-center gap-3 bg-slate-900 p-2.5 rounded-lg border border-slate-800 text-sm">
-                        <input 
-                          type="checkbox" 
-                          checked={item.enabled}
-                          onChange={() => toggleUrl(item.id)}
-                          className="rounded bg-slate-800 border-slate-700 text-indigo-600 w-4 h-4"
-                        />
-                        <span className="flex-1 font-mono text-xs text-slate-300 truncate">{targetDomain}{item.path}</span>
-                        <div className="flex items-center gap-1">
-                          <input 
-                            type="number"
-                            value={item.weight}
-                            onChange={(e) => {
-                              const val = parseInt(e.target.value) || 0;
-                              setDiscoveredUrls(discoveredUrls.map(u => u.id === item.id ? { ...u, weight: val } : u));
-                            }}
-                            className="w-16 bg-slate-950 border border-slate-700 rounded px-2 py-1 text-xs text-right text-white"
-                          />
-                          <span className="text-xs text-slate-500">%</span>
-                        </div>
-                        <button onClick={() => removePath(item.id)} className="text-slate-500 hover:text-red-400 text-xs px-2">
-                          ✕
-                        </button>
-                      </div>
-                    ))}
-
-                    <div className="flex gap-2 mt-2">
-                      <input 
-                        type="text" 
-                        value={newPath}
-                        onChange={(e) => setNewPath(e.target.value)}
-                        placeholder="Add custom route (e.g., /pricing)" 
-                        className="flex-1 bg-slate-900 border border-slate-700 rounded px-3 py-1.5 text-xs text-slate-300"
-                      />
-                      <button onClick={addPath} className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-xs rounded border border-slate-700">
-                        Add Path
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                    <div>
-                      <label className="text-xs font-semibold text-slate-400">Measurement ID</label>
-                      <input 
-                        type="text" 
-                        value={measurementId}
-                        onChange={(e) => setMeasurementId(e.target.value)}
-                        className="w-full mt-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-slate-400">Traffic Source Channel</label>
-                      <select 
-                        value={trafficSource}
-                        onChange={(e) => setTrafficSource(e.target.value)}
-                        className="w-full mt-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-slate-300"
-                      >
-                        <option value="organic">Organic Search (Google / Bing)</option>
-                        <option value="social">Social (Reddit, X)</option>
-                        <option value="referral">Referral</option>
-                        <option value="direct">Direct</option>
-                      </select>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <div>
-                      <label className="text-xs font-semibold text-slate-400">Daily Visits Goal</label>
-                      <input 
-                        type="number" 
-                        value={dailyVisits}
-                        onChange={(e) => setDailyVisits(parseInt(e.target.value) || 0)}
-                        className="w-full mt-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-slate-400">Bounce Rate ({bounceRate}%)</label>
-                      <input 
-                        type="range" 
-                        min="10" 
-                        max="90" 
-                        value={bounceRate}
-                        onChange={(e) => setBounceRate(parseInt(e.target.value))}
-                        className="w-full mt-3 accent-indigo-500"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-semibold text-slate-400">Click Rate ({clickThroughRate}%)</label>
-                      <input 
-                        type="range" 
-                        min="0" 
-                        max="50" 
-                        value={clickThroughRate}
-                        onChange={(e) => setClickThroughRate(parseInt(e.target.value))}
-                        className="w-full mt-3 accent-indigo-500"
-                      />
-                    </div>
-                  </div>
-
-                  <button 
-                    onClick={createCampaign}
-                    className="w-full py-3 bg-indigo-600 hover:bg-indigo-500 font-semibold text-white rounded-lg transition shadow-lg shadow-indigo-600/20"
-                  >
-                    Launch & Distribute Simulation
-                  </button>
                 </div>
               </div>
             )}
 
-            {activeTab === 'live' && (
-              <div className="max-w-6xl mx-auto space-y-4">
+            {/* TAB 2: LOGS */}
+            {activeTab === 'logs' && (
+              <div className="max-w-5xl mx-auto space-y-4">
                 <div className="flex justify-between items-center">
-                  <div>
-                    <h2 className="text-2xl font-bold">Real-time GA4 Stream</h2>
-                    <p className="text-slate-400 text-sm">Hits generated with session & click tracking parameters.</p>
-                  </div>
-                  <div className="text-xs text-emerald-400 bg-emerald-950/40 px-3 py-1.5 rounded-full border border-emerald-800/40">
-                    🟢 Stream Active
-                  </div>
+                  <h2 className="text-2xl font-black text-white">Dispatched GA4 Telemetry History</h2>
+                  <button onClick={() => setActiveTab('crawl_launch')} className="px-3 py-1.5 bg-indigo-600 text-xs font-bold rounded-lg">
+                    Back to Dispatcher
+                  </button>
                 </div>
 
-                <div className="bg-slate-900 border border-slate-800 rounded-xl overflow-hidden">
-                  <table className="w-full text-left text-xs font-mono text-slate-300">
-                    <thead className="bg-slate-950 text-slate-400 uppercase">
+                <div className="bg-[#0b1329] border border-slate-800 rounded-2xl overflow-hidden shadow-xl">
+                  <table className="w-full text-left text-xs font-mono">
+                    <thead className="bg-[#070d1e] text-slate-400 uppercase">
                       <tr>
                         <th className="px-4 py-3">Time</th>
-                        <th className="px-4 py-3">URL</th>
-                        <th className="px-4 py-3">Country</th>
-                        <th className="px-4 py-3">Channel</th>
-                        <th className="px-4 py-3">Click</th>
+                        <th className="px-4 py-3">Dispatched Target</th>
+                        <th className="px-4 py-3">Source/Medium</th>
                         <th className="px-4 py-3">Status</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-800">
-                      {hitLogs.length === 0 ? (
+                    <tbody className="divide-y divide-slate-800 text-slate-300">
+                      {liveLogs.length === 0 ? (
                         <tr>
-                          <td colSpan="6" className="text-center py-8 text-slate-500">
-                            Awaiting initial cycle...
+                          <td colSpan="4" className="text-center py-8 text-slate-500 font-sans">
+                            No hits sent yet. Use the dispatcher to trigger hits.
                           </td>
                         </tr>
                       ) : (
-                        hitLogs.map((log) => (
-                          <tr key={log.id} className="hover:bg-slate-800/50">
-                            <td className="px-4 py-3 text-slate-400">{log.time}</td>
-                            <td className="px-4 py-3 text-indigo-300">{log.domain}{log.url}</td>
-                            <td className="px-4 py-3">{log.country}</td>
-                            <td className="px-4 py-3 capitalize">{log.source}</td>
-                            <td className="px-4 py-3">
-                              {log.clicked ? <span className="text-emerald-400 font-bold">Click</span> : <span className="text-slate-500">Pageview</span>}
-                            </td>
-                            <td className="px-4 py-3 text-emerald-400">{log.status}</td>
+                        liveLogs.map((log, i) => (
+                          <tr key={i} className="hover:bg-slate-800/40">
+                            <td className="px-4 py-3 text-slate-400">{log.timestamp}</td>
+                            <td className="px-4 py-3 text-indigo-300 truncate max-w-xs">{log.target_url}</td>
+                            <td className="px-4 py-3">{log.channel}</td>
+                            <td className="px-4 py-3 text-emerald-400">{log.ga_status}</td>
                           </tr>
                         ))
                       )}
@@ -482,6 +436,7 @@
                 </div>
               </div>
             )}
+
           </main>
         </div>
       );
